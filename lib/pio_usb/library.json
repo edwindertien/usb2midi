@@ -1,0 +1,10 @@
+{
+  "name": "pio_usb",
+  "version": "0.5.3",
+  "description": "Pico-PIO-USB vendored locally",
+  "frameworks": ["arduino"],
+  "platforms": ["raspberrypi"],
+  "build": {
+    "srcFilter": ["+<*.c>", "+<*.cpp>"]
+  }
+}

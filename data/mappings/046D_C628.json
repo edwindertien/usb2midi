@@ -1,0 +1,17 @@
+{
+  "_comment": "SpaceMouse Pro (Logitech VID 046D, PID C628)",
+  "name":       "SpaceMouse Pro",
+  "midi_ch":    1,
+  "cc_base":    1,
+  "note_base":  36,
+  "note_vel":   100,
+  "deadzone":   800,
+  "axes": [
+    { "cc": 1, "invert": false, "scale": 1.0, "_name": "TX left/right" },
+    { "cc": 2, "invert": false, "scale": 1.0, "_name": "TY up/down" },
+    { "cc": 3, "invert": false, "scale": 1.0, "_name": "TZ fwd/back" },
+    { "cc": 4, "invert": false, "scale": 1.0, "_name": "RX pitch" },
+    { "cc": 5, "invert": false, "scale": 1.0, "_name": "RY roll" },
+    { "cc": 6, "invert": false, "scale": 1.0, "_name": "RZ yaw" }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "_comment": "Logitech F310 gamepad (046D:C21D)",
+  "name":       "Logitech F310",
+  "midi_ch":    2,
+  "cc_base":    14,
+  "note_base":  48,
+  "note_vel":   100,
+  "deadzone":   1000,
+  "axes": [
+    { "cc": 14, "invert": false, "scale": 1.0, "_name": "Left stick X" },
+    { "cc": 15, "invert": false, "scale": 1.0, "_name": "Left stick Y" },
+    { "cc": 16, "invert": false, "scale": 1.0, "_name": "Right stick X" },
+    { "cc": 17, "invert": false, "scale": 1.0, "_name": "Right stick Y" },
+    { "cc": 18, "invert": false, "scale": 1.0, "_name": "L-trigger" },
+    { "cc": 19, "invert": false, "scale": 1.0, "_name": "R-trigger" }
+  ]
+}
