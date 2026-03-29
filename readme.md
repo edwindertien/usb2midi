@@ -6,6 +6,12 @@ SpaceMouse USB host test for **Waveshare RP2350-USB-A**.
 - USB-C device: **CDC serial** for debug output
 - CPU: **120 MHz** (required for pio-usb timing)
 
+
+## TODO
+
+- add figures, setup guide, stuff on remoiving R13 (pictures)
+- add display OLED code
+- add neopixel code (plugging in/out devices, data transfer)
 ---
 
 ## Setup

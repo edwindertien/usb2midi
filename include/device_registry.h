@@ -16,7 +16,8 @@
 #define PID_SPACEMOUSE_PRO_LOGITECH  0xC628u
 #define PID_SPACEPILOT_PRO           0xC629u
 #define PID_SPACENAVIGATOR_NB        0xC62Bu
-#define PID_F310                     0xC21Du
+#define PID_F310_DINPUT              0xC21Du   // DirectInput mode
+#define PID_F310_XINPUT              0xC216u   // XInput mode  ← your device
 
 #define VID_THRUSTMASTER             0x044Fu
 #define PID_TM_USB_JOYSTICK          0xB108u
@@ -25,7 +26,8 @@
 enum DeviceType {
     DEV_UNKNOWN = 0,
     DEV_SPACEMOUSE,
-    DEV_F310,
+    DEV_F310_DI,    // DirectInput — standard HID report
+    DEV_F310_XI,    // XInput — different report layout
     DEV_THRUSTMASTER,
     DEV_GENERIC,
 };
@@ -46,8 +48,8 @@ inline DeviceType classify_device(uint16_t vid, uint16_t pid) {
             pid == PID_SPACEPILOT_PRO         ||
             pid == PID_SPACENAVIGATOR_NB)
             return DEV_SPACEMOUSE;
-        if (pid == PID_F310)
-            return DEV_F310;
+        if (pid == PID_F310_DINPUT) return DEV_F310_DI;
+        if (pid == PID_F310_XINPUT) return DEV_F310_XI;
     }
     if (vid == VID_THRUSTMASTER)
         if (pid == PID_TM_USB_JOYSTICK)
@@ -55,9 +57,20 @@ inline DeviceType classify_device(uint16_t vid, uint16_t pid) {
     return DEV_GENERIC;
 }
 
+inline const char* device_type_name(DeviceType t) {
+    switch (t) {
+    case DEV_SPACEMOUSE:   return "SpaceMouse";
+    case DEV_F310_DI:      return "F310(DInput)";
+    case DEV_F310_XI:      return "F310(XInput)";
+    case DEV_THRUSTMASTER: return "Thrustmaster";
+    default:               return "Generic";
+    }
+}
+
 // ── Parser declarations ───────────────────────────────────────────────────
 bool parse_spacemouse   (HIDDeviceState &s, const uint8_t *report, uint16_t len);
-bool parse_f310         (HIDDeviceState &s, const uint8_t *report, uint16_t len);
+bool parse_f310_dinput  (HIDDeviceState &s, const uint8_t *report, uint16_t len);
+bool parse_f310_xinput  (HIDDeviceState &s, const uint8_t *report, uint16_t len);
 bool parse_thrustmaster (HIDDeviceState &s, const uint8_t *report, uint16_t len);
 bool parse_generic      (HIDDeviceState &s, const uint8_t *report, uint16_t len);
 
@@ -65,7 +78,8 @@ inline bool parse_report(DeviceType type, HIDDeviceState &s,
                          const uint8_t *report, uint16_t len) {
     switch (type) {
     case DEV_SPACEMOUSE:   return parse_spacemouse(s, report, len);
-    case DEV_F310:         return parse_f310(s, report, len);
+    case DEV_F310_DI:      return parse_f310_dinput(s, report, len);
+    case DEV_F310_XI:      return parse_f310_xinput(s, report, len);
     case DEV_THRUSTMASTER: return parse_thrustmaster(s, report, len);
     default:               return parse_generic(s, report, len);
     }
