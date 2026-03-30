@@ -131,19 +131,53 @@ bool parse_f310_xinput(HIDDeviceState &s, const uint8_t *report, uint16_t len) {
     return true;
 }
 
-// ── Thrustmaster ──────────────────────────────────────────────────────────
+// ── Thrustmaster USB Joystick (B108 and B305 variants) ───────────────────
+//
+// Confirmed layout from B305 capture:
+//   Bytes 0-1: Stick X    (uint16 LE, centre ~32768)
+//   Bytes 2-3: Stick Y    (uint16 LE, centre ~32768)
+//   Bytes 4-5: Rudder/Z   (uint16 LE, centre ~32768)
+//   Byte  6:   Throttle   (uint8, 0=full throttle, 255=idle — unipolar)
+//   Byte  7:   Buttons    (uint8 bitmask, 6 buttons in bits 0-5)
+//   Byte  8:   POV hat    (low nibble: 0=up,1=up-R,2=R,...,7=up-L,8=centre)
+//
+// Note: A0 at rest showed +15360 rather than 0 — the stick physical
+// centre is not at 32768. This is normal for uncalibrated joysticks;
+// the deadzone handles it.
 bool parse_thrustmaster(HIDDeviceState &s, const uint8_t *report, uint16_t len) {
-    if (len < 7) return false;
-    s.axis_count = 4; s.button_count = 12;
-    auto u16s = [&](uint8_t i) -> int16_t {
-        return (int16_t)((uint16_t)report[i]|((uint16_t)report[i+1]<<8)) - 32768;
+    if (len < 8) return false;
+
+    s.axis_count   = 4;
+    s.button_count = 12;  // 6 face + 4 hat virtual buttons
+
+    // uint16 LE centred at 32768 → signed int16
+    auto u16c = [&](uint8_t i) -> int16_t {
+        return (int16_t)((uint16_t)report[i] | ((uint16_t)report[i+1] << 8)) - 32768;
     };
-    s.axis[0] = u16s(0); s.axis[1] = u16s(2);
-    s.axis[2] = scale_axis(report[4], 0, 255);
-    s.axis[3] = scale_axis(report[5], 0, 255);
-    for (int i=0;i<4;i++) s.axis_changed[i]=true;
-    uint32_t cur = (uint32_t)report[6]|((uint32_t)report[7]<<8);
-    s.buttons_changed = cur ^ s.buttons; s.buttons = cur;
+
+    s.axis[0] = u16c(0);  // Stick X
+    s.axis[1] = u16c(2);  // Stick Y
+    s.axis[2] = u16c(4);  // Rudder/twist
+    // Throttle: uint8, 0=max, 255=min → invert and scale to int16
+    s.axis[3] = scale_axis(255 - report[6], 0, 255);
+    for (int i = 0; i < 4; i++) s.axis_changed[i] = true;
+
+    // Buttons bits 0-5
+    uint32_t cur = report[7] & 0x3F;
+
+    // POV hat → virtual buttons in bits 8-11
+    if (len >= 9) {
+        uint8_t hat = report[8] & 0x0F;
+        if (hat != 8) {
+            if (hat==7||hat==0||hat==1) cur |= (1u <<  8);  // Up
+            if (hat==1||hat==2||hat==3) cur |= (1u <<  9);  // Right
+            if (hat==3||hat==4||hat==5) cur |= (1u << 10);  // Down
+            if (hat==5||hat==6||hat==7) cur |= (1u << 11);  // Left
+        }
+    }
+
+    s.buttons_changed = cur ^ s.buttons;
+    s.buttons = cur;
     return true;
 }
 

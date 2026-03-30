@@ -21,6 +21,7 @@
 
 #define VID_THRUSTMASTER             0x044Fu
 #define PID_TM_USB_JOYSTICK          0xB108u
+#define PID_TM_USB_JOYSTICK_B305     0xB305u   // Thrustmaster USB Joystick variant
 
 // ── Device type ───────────────────────────────────────────────────────────
 enum DeviceType {
@@ -52,7 +53,8 @@ inline DeviceType classify_device(uint16_t vid, uint16_t pid) {
         if (pid == PID_F310_XINPUT) return DEV_F310_XI;
     }
     if (vid == VID_THRUSTMASTER)
-        if (pid == PID_TM_USB_JOYSTICK)
+        if (pid == PID_TM_USB_JOYSTICK ||
+            pid == PID_TM_USB_JOYSTICK_B305)
             return DEV_THRUSTMASTER;
     return DEV_GENERIC;
 }

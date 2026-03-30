@@ -2,6 +2,7 @@
  * main.cpp — USB2MIDI multi-device
  * USB-C: composite CDC serial + USB-MIDI
  * USB-A: HID host via pio-usb (GP12/13)
+ * OLED:  SSD1306 64x32 on I2C0 GP4(SDA)/GP5(SCL) at 5fps
  */
 
 #include <Arduino.h>
@@ -13,11 +14,16 @@
 #include "device_registry.h"
 #include "config.h"
 #include "mapping.h"
+#include "oled.h"
+#include "neo.h"
 
 // ── USB-C device side ────────────────────────────────────────────────────
 Adafruit_USBD_MIDI usb_midi;
 #include <MIDI.h>
 MIDI_CREATE_INSTANCE(Adafruit_USBD_MIDI, usb_midi, MIDI);
+
+OLEDDisplay oled;
+NeoStatus   neo;
 
 // ── Device table ──────────────────────────────────────────────────────────
 static HIDDevice    g_devices[MAX_DEVICES];
@@ -94,11 +100,28 @@ void setup() {
 
     // LittleFS — non-fatal
     config_init();
+
+    // OLED — I2C0 on GP4/GP5, after USB stack
+    oled.begin();
+
+    // NeoPixel — direct GPIO bit-bang, no PIO, no library conflict
+    neo.begin();
+    neo.powered();
 }
 
 // ── Core 0: loop ──────────────────────────────────────────────────────────
 void loop() {
     MIDI.read();
+    neo.update();
+
+    // OLED update — 5fps, 5ms I2C block every 200ms, USB IRQ keeps stack alive
+    {
+        static HIDDevice snap[MAX_DEVICES];
+        uint32_t s = spin_lock_blocking(g_lock);
+        memcpy(snap, g_devices, sizeof(snap));
+        spin_unlock(g_lock, s);
+        oled.update(snap, MAX_DEVICES);
+    }
 
     // Compute LED state
     bool any_conn = false, any_dirty = false;
@@ -148,6 +171,7 @@ void loop() {
                               device_type_name(t));
                 Serial.flush();
             }
+            neo.mountFlash();
             break;
         case EVT_ARMED:
             if (Serial && evt.slot >= 0) {
@@ -163,10 +187,10 @@ void loop() {
                               g_cfg[evt.slot].loaded ? "JSON" : "default");
                 Serial.flush();
             }
+            neo.connected();
             break;
         case EVT_NOARM:
             if (Serial) {
-                // We reuse EVT_NOARM with vid=count as a diagnostic when vid < 8
                 if (evt.vid < 8 && evt.pid == 0)
                     Serial.printf("    HID instance count = %u\r\n", evt.vid);
                 else
@@ -180,7 +204,16 @@ void loop() {
                               evt.dev_addr, evt.vid, evt.pid);
                 Serial.flush();
             }
-            raw_dump_reset = true;  // reset XInput dump counter for next plug
+            raw_dump_reset = true;
+            neo.unmountFlash();
+            {
+                uint32_t sv = spin_lock_blocking(g_lock);
+                bool any = false;
+                for (int i = 0; i < MAX_DEVICES; i++)
+                    if (g_devices[i].connected) { any = true; break; }
+                spin_unlock(g_lock, sv);
+                if (!any) neo.powered();
+            }
             break;
         }
     }
@@ -227,6 +260,7 @@ void loop() {
         const DeviceConfig &cfg = g_cfg[slot];
 
         // MIDI CC
+        bool midi_sent = false;
         for (int a = 0; a < snap.state.axis_count && a < MAX_AXES; a++) {
             if (!snap.state.axis_changed[a]) continue;
             uint8_t cc  = axis_cc(cfg, a);
@@ -234,6 +268,7 @@ void loop() {
             if (val != prev_cc[slot][a]) {
                 MIDI.sendControlChange(cc, val, snap.midi_ch);
                 prev_cc[slot][a] = val;
+                midi_sent = true;
             }
         }
         // MIDI notes
@@ -245,8 +280,11 @@ void loop() {
                     MIDI.sendNoteOn(note, snap.note_vel, snap.midi_ch);
                 else
                     MIDI.sendNoteOff(note, 0, snap.midi_ch);
+                midi_sent = true;
             }
         }
+
+        if (midi_sent) neo.midiOut();
 
         // CDC debug
         if (!Serial) continue;

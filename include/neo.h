@@ -1,92 +1,99 @@
 #pragma once
 /*
- * neo.h — Single WS2812B neopixel status indicator
+ * neo.h — WS2812B single LED on GP16
  *
- * Hardware: WS2812B on GPIO16 (confirmed from Waveshare RP2350-USB-A schematic)
- * Library:  Adafruit NeoPixel (in platformio.ini lib_deps)
+ * Drives the WS2812B using direct GPIO bit-banging timed for 120MHz.
+ * No PIO library — zero conflict with pio-usb or anything else.
  *
- * Colour semantics:
- *   Idle (no device)    : slow breathing blue
- *   Device connected    : dim steady green
- *   HID data received   : brief red flash   (rxFlash)
- *   MIDI data sent      : brief green flash  (txFlash)
- *   Device mounted      : cyan flash         (mountFlash)
- *   Device removed      : orange flash       (unmountFlash)
- *   Error               : long red flash     (errorFlash)
+ * Timing at 120MHz (1 cycle = 8.33ns):
+ *   T0H ~350ns = ~42 nops    T0L ~800ns = ~96 nops
+ *   T1H ~700ns = ~84 nops    T1L ~600ns = ~72 nops
+ *   Reset > 50µs low (delayMicroseconds)
+ *
+ * Total per-LED transmission: 24 bits × ~1.25µs = ~30µs
+ * Interrupts disabled only during that 30µs window.
+ *
+ * MUST only be called from core 0.
+ *
+ * Colour scheme:
+ *   Red          = powered, no device
+ *   Blue         = device connected, idle
+ *   Green flash  = MIDI data sent
+ *   Cyan flash   = device mounted
+ *   Orange flash = device unmounted
  */
 
-#include <Adafruit_NeoPixel.h>
+#include <Arduino.h>
+#include <hardware/gpio.h>
+#include <hardware/sync.h>
 
-#define NEO_PIN    16
-#define NEO_COUNT  1
-#define NEO_BRIGHT 40   // 0-255, WS2812B at full is very bright
+#define NEO_PIN  16
+#define NEO_DIM  6    // max brightness per channel (0-255)
 
 class NeoStatus {
 public:
     void begin() {
-        _px.begin();
-        _px.setBrightness(NEO_BRIGHT);
-        _px.clear();
-        _px.show();
+        gpio_init(NEO_PIN);
+        gpio_set_dir(NEO_PIN, GPIO_OUT);
+        gpio_put(NEO_PIN, 0);
+        _write(0, 0, 0);
     }
 
-    // Call every loop() — handles timed flashes and breathing non-blocking
+    // Call every loop() — handles flash timeouts
     void update() {
         uint32_t now = millis();
-
-        // Flash timeout — return to base colour
         if (_flash_until && now >= _flash_until) {
             _flash_until = 0;
-            _show(_base_r, _base_g, _base_b);
-        }
-
-        // Breathing when idle and no flash active
-        if (!_flash_until && _breathe) {
-            if (now - _last_breathe > 16) {  // ~60fps
-                float t = (float)(now % 3000) / 3000.0f;
-                float v = 0.5f + 0.5f * sinf(t * 6.2832f);
-                _show((uint8_t)(_base_r * v),
-                      (uint8_t)(_base_g * v),
-                      (uint8_t)(_base_b * v));
-                _last_breathe = now;
-            }
+            _write(_base_r, _base_g, _base_b);
         }
     }
 
-    // Set persistent base colour shown between flashes
-    void setBase(uint8_t r, uint8_t g, uint8_t b, bool breathe = false) {
+    void setBase(uint8_t r, uint8_t g, uint8_t b) {
         _base_r = r; _base_g = g; _base_b = b;
-        _breathe = breathe;
-        if (!_flash_until) _show(r, g, b);
+        if (!_flash_until) _write(r, g, b);
     }
 
-    // Momentary flash overriding base colour
-    void flash(uint8_t r, uint8_t g, uint8_t b, uint32_t ms = 30) {
-        _show(r, g, b);
+    void flash(uint8_t r, uint8_t g, uint8_t b, uint32_t ms = 40) {
+        _write(r, g, b);
         _flash_until = millis() + ms;
     }
 
-    // ── Semantic helpers ──────────────────────────────────────────────────
-    void idle()          { setBase(0,  0, 20, true);  }  // breathing blue
-    void connected()     { setBase(0,  8,  0, false); }  // dim green
-    void rxFlash()       { flash(40,  0,  0,  20);    }  // red:    HID in
-    void txFlash()       { flash( 0, 40,  0,  20);    }  // green:  MIDI out
-    void mountFlash()    { flash( 0, 20, 40,  80);    }  // cyan:   device mounted
-    void unmountFlash()  { flash(40, 10,  0,  80);    }  // orange: device removed
-    void errorFlash()    { flash(40,  0,  0, 200);    }  // long red: error
+    void powered()      { setBase(NEO_DIM, 0, 0);           }  // red
+    void connected()    { setBase(0, 0, NEO_DIM);           }  // blue
+    void midiOut()      { flash(0, NEO_DIM, 0, 40);         }  // green
+    void mountFlash()   { flash(0, NEO_DIM, NEO_DIM, 80);   }  // cyan
+    void unmountFlash() { flash(NEO_DIM, NEO_DIM/2, 0, 80); }  // orange
 
 private:
-    Adafruit_NeoPixel _px{NEO_COUNT, NEO_PIN, NEO_GRB + NEO_KHZ800};
     uint8_t  _base_r = 0, _base_g = 0, _base_b = 0;
-    bool     _breathe      = false;
-    uint32_t _flash_until  = 0;
-    uint32_t _last_breathe = 0;
+    uint32_t _flash_until = 0;
 
-    void _show(uint8_t r, uint8_t g, uint8_t b) {
-        _px.setPixelColor(0, _px.Color(r, g, b));
-        _px.show();
+    // Send 1 bit — tight nop loops calibrated for 120MHz
+    __attribute__((noinline, optimize("O1")))
+    void _bit(bool b) {
+        if (b) {
+            gpio_put(NEO_PIN, 1);
+            for (volatile int i = 0; i < 9; i++) __asm("nop");  // ~700ns
+            gpio_put(NEO_PIN, 0);
+            for (volatile int i = 0; i < 7; i++) __asm("nop");  // ~600ns
+        } else {
+            gpio_put(NEO_PIN, 1);
+            for (volatile int i = 0; i < 4; i++) __asm("nop");  // ~350ns
+            gpio_put(NEO_PIN, 0);
+            for (volatile int i = 0; i < 10; i++) __asm("nop"); // ~800ns
+        }
+    }
+
+    void _write(uint8_t r, uint8_t g, uint8_t b) {
+        uint32_t irq = save_and_disable_interrupts();
+        // This module uses RGB order (not standard GRB)
+        for (int i = 7; i >= 0; i--) _bit((r >> i) & 1);
+        for (int i = 7; i >= 0; i--) _bit((g >> i) & 1);
+        for (int i = 7; i >= 0; i--) _bit((b >> i) & 1);
+        restore_interrupts(irq);
+        gpio_put(NEO_PIN, 0);
+        delayMicroseconds(60);  // latch
     }
 };
 
-// Global instance — defined in main.cpp as: NeoStatus neo;
 extern NeoStatus neo;
