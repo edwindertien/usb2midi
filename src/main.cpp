@@ -218,19 +218,14 @@ void loop() {
         }
     }
 
-    // ── Pending mounts — complete on core 0 (config_load is LittleFS) ────────
+    // ── Pending mounts — update slot config from JSON on core 0 ──────────────
     for (auto &p : g_pending) {
         if (!p.active) continue;
         p.active = false;
         DeviceConfig cfg = config_load(p.vid, p.pid);
         uint32_t sv = spin_lock_blocking(g_lock);
-        int slot = free_slot();
+        int slot = find_device(p.dev_addr);
         if (slot >= 0) {
-            g_devices[slot].clear();
-            g_devices[slot].dev_addr  = p.dev_addr;
-            g_devices[slot].vid       = p.vid;
-            g_devices[slot].pid       = p.pid;
-            g_devices[slot].connected = true;
             apply_config(slot, cfg);
             memset(prev_cc[slot], 255, MAX_AXES);
         }
@@ -240,7 +235,7 @@ void loop() {
 
     // ── Raw XInput report dump ────────────────────────────────────────────
     if (raw_ready && Serial) {
-        Serial.printf("[raw XInput %u bytes] ", raw_len);
+        Serial.printf("[raw %u bytes] ", raw_len);
         for (uint8_t i = 0; i < raw_len; i++) Serial.printf("%02X ", raw_buf[i]);
         Serial.println();
         Serial.flush();
@@ -314,22 +309,64 @@ extern "C" void tuh_mount_cb(uint8_t dev_addr) {
     tuh_vid_pid_get(dev_addr, &vid, &pid);
     evt_push({EVT_MOUNT, dev_addr, vid, pid, -1});
 
+    DeviceType type = classify_device(vid, pid);
+
     uint8_t count = tuh_hid_instance_count(dev_addr);
     evt_push({EVT_NOARM, dev_addr, (uint16_t)count, 0, -1}); // log count
 
+    // Arm ALL HID instances (some devices need more than one)
     bool armed = false;
     for (uint8_t inst = 0; inst < count; inst++)
-        if (tuh_hid_receive_report(dev_addr, inst)) { armed = true; break; }
+        if (tuh_hid_receive_report(dev_addr, inst)) armed = true;
     if (!armed) { evt_push({EVT_NOARM, dev_addr, vid, pid, -1}); return; }
 
-    // Don't call config_load here — LittleFS is not core 1 safe.
-    // Signal core 0 to complete the mount with a pending entry.
-    for (auto &p : g_pending) {
-        if (!p.active) {
-            p = {dev_addr, vid, pid, true};
+    // Create the device slot immediately so report callbacks can find it.
+    // Use built-in defaults for now — core 0 will update from JSON via g_pending.
+    uint32_t sv = spin_lock_blocking(g_lock);
+    int slot = free_slot();
+    if (slot >= 0) {
+        g_devices[slot].clear();
+        g_devices[slot].dev_addr  = dev_addr;
+        g_devices[slot].vid       = vid;
+        g_devices[slot].pid       = pid;
+        g_devices[slot].connected = true;
+        // Apply compile-time defaults — JSON override happens on core 0
+        switch (type) {
+        case DEV_SPACEMOUSE:
+            g_devices[slot].midi_ch=1; g_devices[slot].cc_base=1;
+            g_devices[slot].note_base=36; g_devices[slot].deadzone=800;
+            strlcpy(g_devices[slot].name,"SpaceMouse",sizeof(g_devices[slot].name));
+            break;
+        case DEV_F310_DI: case DEV_F310_XI:
+            g_devices[slot].midi_ch=2; g_devices[slot].cc_base=14;
+            g_devices[slot].note_base=48; g_devices[slot].deadzone=1500;
+            strlcpy(g_devices[slot].name,"F310",sizeof(g_devices[slot].name));
+            break;
+        case DEV_THRUSTMASTER:
+            g_devices[slot].midi_ch=3; g_devices[slot].cc_base=20;
+            g_devices[slot].note_base=60; g_devices[slot].deadzone=2000;
+            strlcpy(g_devices[slot].name,"Thrustmaster",sizeof(g_devices[slot].name));
+            break;
+        case DEV_BETAFPV:
+            g_devices[slot].midi_ch=4; g_devices[slot].cc_base=30;
+            g_devices[slot].note_base=72; g_devices[slot].deadzone=500;
+            strlcpy(g_devices[slot].name,"BetaFPV JS",sizeof(g_devices[slot].name));
+            break;
+        default:
+            g_devices[slot].midi_ch=4; g_devices[slot].cc_base=30;
+            g_devices[slot].note_base=72; g_devices[slot].deadzone=500;
+            snprintf(g_devices[slot].name,sizeof(g_devices[slot].name),
+                     "%04X:%04X",vid,pid);
             break;
         }
+        g_devices[slot].note_vel = 100;
+        memset(prev_cc[slot], 255, MAX_AXES);
     }
+    spin_unlock(g_lock, sv);
+
+    // Signal core 0 to load JSON and update the slot config
+    for (auto &p : g_pending)
+        if (!p.active) { p = {dev_addr, vid, pid, true}; break; }
 }
 
 extern "C" void tuh_umount_cb(uint8_t dev_addr) {
@@ -371,19 +408,37 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance,
         return;
     }
     DeviceType type = classify_device(g_devices[slot].vid, g_devices[slot].pid);
+    spin_unlock(g_lock, sv);
+
+    // ── Standard HID pipeline ─────────────────────────────────────────────
+    sv = spin_lock_blocking(g_lock);
     memset(g_devices[slot].state.axis_changed, 0, MAX_AXES);
     g_devices[slot].state.buttons_changed = 0;
     HIDDeviceState local = g_devices[slot].state;
     spin_unlock(g_lock, sv);
 
-    // Capture first 5 raw reports for XInput so core 0 can print them
-    if (type == DEV_F310_XI && !raw_ready) {
+    // Capture raw reports for diagnostics (F310 XInput and Thrustmaster)
+    if ((type == DEV_F310_XI || type == DEV_THRUSTMASTER) && !raw_ready) {
         static uint8_t n = 0;
-        if (raw_dump_reset) { n = 0; raw_dump_reset = false; }
-        if (n < 5) {
+        static uint8_t last_raw[20] = {};
+        if (raw_dump_reset) { n = 0; memset(last_raw, 0, sizeof(last_raw)); raw_dump_reset = false; }
+        // For Thrustmaster: only dump when something OTHER than bytes 2-5 changes
+        // so we can isolate button/hat bytes
+        bool interesting = false;
+        if (type == DEV_THRUSTMASTER) {
+            for (int i = 0; i < len && i < 20; i++) {
+                if (i < 2 || i == 6) {  // watch bytes 0,1 and 6
+                    if (report[i] != last_raw[i]) interesting = true;
+                }
+            }
+        } else {
+            interesting = true;
+        }
+        if (interesting && n < 20) {
             n++;
             raw_len = (uint8_t)(len < sizeof(raw_buf) ? len : sizeof(raw_buf));
             memcpy(raw_buf, report, raw_len);
+            memcpy(last_raw, report, raw_len);
             raw_ready = true;
         }
     }

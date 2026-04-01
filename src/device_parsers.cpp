@@ -131,51 +131,81 @@ bool parse_f310_xinput(HIDDeviceState &s, const uint8_t *report, uint16_t len) {
     return true;
 }
 
-// ── Thrustmaster USB Joystick (B108 and B305 variants) ───────────────────
+// ── Thrustmaster USB Joystick (B108 and B305 / Top Gun Fox 2 Pro Shock) ───
 //
-// Confirmed layout from B305 capture:
-//   Bytes 0-1: Stick X    (uint16 LE, centre ~32768)
-//   Bytes 2-3: Stick Y    (uint16 LE, centre ~32768)
-//   Bytes 4-5: Rudder/Z   (uint16 LE, centre ~32768)
-//   Byte  6:   Throttle   (uint8, 0=full throttle, 255=idle — unipolar)
-//   Byte  7:   Buttons    (uint8 bitmask, 6 buttons in bits 0-5)
-//   Byte  8:   POV hat    (low nibble: 0=up,1=up-R,2=R,...,7=up-L,8=centre)
+// Layout confirmed from HID report descriptor (mac-hid-dump):
 //
-// Note: A0 at rest showed +15360 rather than 0 — the stick physical
-// centre is not at 32768. This is normal for uncalibrated joysticks;
-// the deadzone handles it.
+//  Bits  0- 6: Buttons 1-7  (7 × 1-bit, active high)
+//  Bits  7-19: Padding       (13 bits, always 0 — gives constant 0x3C in byte 1)
+//  Bits 20-23: Hat switch    (4-bit: 0=N,1=NE,2=E,3=SE,4=S,5=SW,6=W,7=NW, 8-F=centre)
+//  Bits 24-31: X axis        (int8, -128..+127)
+//  Bits 32-39: Y axis        (int8, -128..+127)
+//  Bits 40-47: Rz/rudder     (int8, -128..+127)
+//  Bits 48-55: Slider        (uint8, 0..255)
+//
+// Byte map:
+//  Byte 0: bits 0-7   — buttons [6:0] + padding lsb
+//  Byte 1: bits 8-15  — padding (always 0x3C)
+//  Byte 2: bits 16-23 — padding [4:0] + hat [3:0] in upper nibble
+//  Byte 3: X  (int8)
+//  Byte 4: Y  (int8)
+//  Byte 5: Rz (int8)
+//  Byte 6: Slider (uint8, centre at 128)
 bool parse_thrustmaster(HIDDeviceState &s, const uint8_t *report, uint16_t len) {
-    if (len < 8) return false;
+    if (len < 7) return false;
 
     s.axis_count   = 4;
-    s.button_count = 12;  // 6 face + 4 hat virtual buttons
+    s.button_count = 11;  // 7 buttons + 4 hat virtual buttons
 
-    // uint16 LE centred at 32768 → signed int16
-    auto u16c = [&](uint8_t i) -> int16_t {
-        return (int16_t)((uint16_t)report[i] | ((uint16_t)report[i+1] << 8)) - 32768;
-    };
-
-    s.axis[0] = u16c(0);  // Stick X
-    s.axis[1] = u16c(2);  // Stick Y
-    s.axis[2] = u16c(4);  // Rudder/twist
-    // Throttle: uint8, 0=max, 255=min → invert and scale to int16
-    s.axis[3] = scale_axis(255 - report[6], 0, 255);
+    s.axis[0] = (int16_t)((int8_t)report[3]) * 256;  // X
+    s.axis[1] = (int16_t)((int8_t)report[4]) * 256;  // Y
+    s.axis[2] = (int16_t)((int8_t)report[5]) * 256;  // Rz/rudder
+    s.axis[3] = (int16_t)((int32_t)(report[6] - 128) * 256);  // Slider (uint8→int16)
     for (int i = 0; i < 4; i++) s.axis_changed[i] = true;
 
-    // Buttons bits 0-5
-    uint32_t cur = report[7] & 0x3F;
+    // Buttons 1-7 in bits 0-6 of byte 0
+    uint32_t cur = report[0] & 0x7F;
 
-    // POV hat → virtual buttons in bits 8-11
-    if (len >= 9) {
-        uint8_t hat = report[8] & 0x0F;
-        if (hat != 8) {
-            if (hat==7||hat==0||hat==1) cur |= (1u <<  8);  // Up
-            if (hat==1||hat==2||hat==3) cur |= (1u <<  9);  // Right
-            if (hat==3||hat==4||hat==5) cur |= (1u << 10);  // Down
-            if (hat==5||hat==6||hat==7) cur |= (1u << 11);  // Left
-        }
+    // Hat: upper nibble of byte 2 (bits 20-23)
+    uint8_t hat = (report[2] >> 4) & 0x0F;
+    if (hat <= 7) {
+        if (hat==7||hat==0||hat==1) cur |= (1u <<  7);  // N
+        if (hat==1||hat==2||hat==3) cur |= (1u <<  8);  // E
+        if (hat==3||hat==4||hat==5) cur |= (1u <<  9);  // S
+        if (hat==5||hat==6||hat==7) cur |= (1u << 10);  // W
     }
 
+    s.buttons_changed = cur ^ s.buttons;
+    s.buttons = cur;
+    return true;
+}
+
+// ── BetaFPV Joystick (0483:572B) ─────────────────────────────────────────
+//
+// Layout confirmed from HID descriptor (52 bytes):
+//   Bytes  0-15: 8 axes × uint16 LE, Logical range 0–2047 (11-bit, centre=1024)
+//                X, Y, Z, Rx, Ry, Rz, Slider, Slider
+//   Bytes 16-17: 16 buttons × 1-bit bitmask
+//
+// Axes are centred at 1024 (0x400), scale to int16.
+bool parse_betafpv(HIDDeviceState &s, const uint8_t *report, uint16_t len) {
+    if (len < 18) return false;
+
+    s.axis_count   = 8;
+    s.button_count = 16;
+
+    // uint16 LE, range 0–2047, centre 1024 → signed int16 (×32 to fill range)
+    auto axis11 = [](const uint8_t *b) -> int16_t {
+        uint16_t raw = (uint16_t)b[0] | ((uint16_t)b[1] << 8);
+        return (int16_t)(((int32_t)raw - 1024) * 32);
+    };
+
+    for (int i = 0; i < 8; i++) {
+        s.axis[i] = axis11(report + i * 2);
+        s.axis_changed[i] = true;
+    }
+
+    uint32_t cur = (uint32_t)report[16] | ((uint32_t)report[17] << 8);
     s.buttons_changed = cur ^ s.buttons;
     s.buttons = cur;
     return true;

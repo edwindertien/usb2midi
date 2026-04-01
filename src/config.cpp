@@ -25,6 +25,7 @@ static DeviceConfig default_config(uint16_t vid, uint16_t pid) {
     case DEV_F310_DI:      snprintf(cfg.name, sizeof(cfg.name), "F310 DInput");     break;
     case DEV_F310_XI:      snprintf(cfg.name, sizeof(cfg.name), "F310 XInput");     break;
     case DEV_THRUSTMASTER: snprintf(cfg.name, sizeof(cfg.name), "Thrustmaster JS"); break;
+    case DEV_BETAFPV:      snprintf(cfg.name, sizeof(cfg.name), "BetaFPV JS");      break;
     default:               snprintf(cfg.name, sizeof(cfg.name), "%04X:%04X", vid, pid); break;
     }
 
@@ -36,6 +37,8 @@ static DeviceConfig default_config(uint16_t vid, uint16_t pid) {
         cfg.midi_ch=2; cfg.cc_base=14; cfg.note_base=48; cfg.deadzone=1500; break;
     case DEV_THRUSTMASTER:
         cfg.midi_ch=3; cfg.cc_base=20; cfg.note_base=60; cfg.deadzone=600;  break;
+    case DEV_BETAFPV:
+        cfg.midi_ch=4; cfg.cc_base=30; cfg.note_base=72; cfg.deadzone=500;  break;
     default:
         cfg.midi_ch=4; cfg.cc_base=30; cfg.note_base=72; cfg.deadzone=500;  break;
     }

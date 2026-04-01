@@ -21,15 +21,19 @@
 
 #define VID_THRUSTMASTER             0x044Fu
 #define PID_TM_USB_JOYSTICK          0xB108u
-#define PID_TM_USB_JOYSTICK_B305     0xB305u   // Thrustmaster USB Joystick variant
+#define PID_TM_USB_JOYSTICK_B305     0xB305u
+
+#define VID_BETAFPV                  0x0483u   // STMicroelectronics VID (used by BetaFPV)
+#define PID_BETAFPV_JOYSTICK         0x572Bu
 
 // ── Device type ───────────────────────────────────────────────────────────
 enum DeviceType {
     DEV_UNKNOWN = 0,
     DEV_SPACEMOUSE,
-    DEV_F310_DI,    // DirectInput — standard HID report
-    DEV_F310_XI,    // XInput — different report layout
+    DEV_F310_DI,
+    DEV_F310_XI,
     DEV_THRUSTMASTER,
+    DEV_BETAFPV,
     DEV_GENERIC,
 };
 
@@ -56,6 +60,8 @@ inline DeviceType classify_device(uint16_t vid, uint16_t pid) {
         if (pid == PID_TM_USB_JOYSTICK ||
             pid == PID_TM_USB_JOYSTICK_B305)
             return DEV_THRUSTMASTER;
+    if (vid == VID_BETAFPV && pid == PID_BETAFPV_JOYSTICK)
+        return DEV_BETAFPV;
     return DEV_GENERIC;
 }
 
@@ -65,6 +71,7 @@ inline const char* device_type_name(DeviceType t) {
     case DEV_F310_DI:      return "F310(DInput)";
     case DEV_F310_XI:      return "F310(XInput)";
     case DEV_THRUSTMASTER: return "Thrustmaster";
+    case DEV_BETAFPV:      return "BetaFPV";
     default:               return "Generic";
     }
 }
@@ -74,6 +81,7 @@ bool parse_spacemouse   (HIDDeviceState &s, const uint8_t *report, uint16_t len)
 bool parse_f310_dinput  (HIDDeviceState &s, const uint8_t *report, uint16_t len);
 bool parse_f310_xinput  (HIDDeviceState &s, const uint8_t *report, uint16_t len);
 bool parse_thrustmaster (HIDDeviceState &s, const uint8_t *report, uint16_t len);
+bool parse_betafpv      (HIDDeviceState &s, const uint8_t *report, uint16_t len);
 bool parse_generic      (HIDDeviceState &s, const uint8_t *report, uint16_t len);
 
 inline bool parse_report(DeviceType type, HIDDeviceState &s,
@@ -83,6 +91,7 @@ inline bool parse_report(DeviceType type, HIDDeviceState &s,
     case DEV_F310_DI:      return parse_f310_dinput(s, report, len);
     case DEV_F310_XI:      return parse_f310_xinput(s, report, len);
     case DEV_THRUSTMASTER: return parse_thrustmaster(s, report, len);
+    case DEV_BETAFPV:      return parse_betafpv(s, report, len);
     default:               return parse_generic(s, report, len);
     }
 }

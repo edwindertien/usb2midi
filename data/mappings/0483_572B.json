@@ -1,0 +1,19 @@
+{
+  "_comment": "BetaFPV Joystick (0483:572B) - 8 axes (11-bit), 16 buttons",
+  "name":      "BetaFPV JS",
+  "midi_ch":   4,
+  "cc_base":   30,
+  "note_base": 72,
+  "note_vel":  100,
+  "deadzone":  500,
+  "axes": [
+    { "cc": 30, "invert": false, "scale": 1.0, "_name": "X" },
+    { "cc": 31, "invert": false, "scale": 1.0, "_name": "Y" },
+    { "cc": 32, "invert": false, "scale": 1.0, "_name": "Z" },
+    { "cc": 33, "invert": false, "scale": 1.0, "_name": "Rx" },
+    { "cc": 34, "invert": false, "scale": 1.0, "_name": "Ry" },
+    { "cc": 35, "invert": false, "scale": 1.0, "_name": "Rz" },
+    { "cc": 36, "invert": false, "scale": 1.0, "_name": "Slider 1" },
+    { "cc": 37, "invert": false, "scale": 1.0, "_name": "Slider 2" }
+  ]
+}
