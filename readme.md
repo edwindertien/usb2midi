@@ -92,6 +92,7 @@ A small box has been designed using OpenSCAD that fits the board + the tiny OLED
 
 The [design files](design/waveshareRP2350box.scad) can be used to generate a printable STL.
 
+![case and module](resources/case.jpg)
 
 
 ## Firmware Architecture
