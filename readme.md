@@ -1,6 +1,8 @@
 # USB2MIDI — Universal USB HID to USB-MIDI Converter
 
-A firmware for the **Waveshare RP2350-USB-A** board that converts USB HID devices (SpaceMouse, gamepads, joysticks, FPV controllers, or any unknown HID device) into USB-MIDI output. Device mappings are configurable via JSON files on LittleFS — no reflashing needed to remap axes or buttons.
+A firmware for the [**Waveshare RP2350-USB-A**](https://www.waveshare.com/wiki/RP2350-USB-A) board that converts USB HID devices (SpaceMouse, gamepads, joysticks, FPV controllers, or any unknown HID device) into USB-MIDI output. Device mappings are configurable via JSON files on LittleFS — no reflashing needed to remap axes or buttons.
+
+![Spacemouse connected to the Waveshare controller with OLED visualisation](resources/spacemouse.jpg)
 
 ---
 
@@ -18,6 +20,8 @@ A firmware for the **Waveshare RP2350-USB-A** board that converts USB HID device
 ---
 
 ## Hardware
+
+![pin mapping by Waveshare](resources/680px-680px-RP2350-USB-A-details-6.jpg)
 
 ### Board: Waveshare RP2350-USB-A
 
@@ -37,6 +41,8 @@ A firmware for the **Waveshare RP2350-USB-A** board that converts USB HID device
 The RP2350-USB-A ships with a 1.5 kΩ resistor R13 permanently pulling D+ high on the USB-A port. This causes pio-usb to see a phantom device and prevents real device detection.
 
 **R13 is located on the underside of the board**, the resistor closest to pin 1 of the RP2350 chip near the USB-A connector.
+
+![removing the resistor](resources/resistorremoval.jpg)
 
 To remove it:
 1. Use a fine soldering iron tip or hot-air station
@@ -62,6 +68,8 @@ I2C address: `0x3C`.
 
 > **Critical:** Use `Wire` (I2C0), **not** `Wire1`. Using Wire1 on GP4/GP5 causes a silent hang at startup.
 
+![OLED display on power and GP4/GP5](resources/oled.jpg)
+
 ### Status LED
 
 The WS2812B is onboard at GP16. No external wiring needed. Driven by direct GPIO bit-bang (no PIO library) to avoid conflicts with pio-usb.
@@ -75,6 +83,16 @@ The WS2812B is onboard at GP16. No external wiring needed. Driven by direct GPIO
 | Orange flash | Device disconnected |
 
 ---
+
+## Box design
+
+A small box has been designed using OpenSCAD that fits the board + the tiny OLED mounted on top.
+
+![OrcaSlicer with case](resources/printcase.jpg)
+
+The [design files](design/waveshareRP2350box.scad) can be used to generate a printable STL.
+
+
 
 ## Firmware Architecture
 
